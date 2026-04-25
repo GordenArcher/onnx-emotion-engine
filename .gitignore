@@ -41,3 +41,13 @@ yarn-error.log*
 coverage/
 htmlcov/
 backend/dump.rdb
+
+
+# Ignore raw training data
+/ml/data/
+
+# Ignore Python environment folders
+/ml/.ipynb_checkpoints/
+
+# Ignore Go binary
+/backend/onnx-emotion-engine
