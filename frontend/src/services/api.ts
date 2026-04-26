@@ -3,7 +3,9 @@ import { APIResponse } from "../types/envelope";
 export async function predictEmotion(
   pixelArray: number[],
 ): Promise<APIResponse> {
-  const response = await fetch("/api/v1/predict", {
+  const API_BASE = import.meta.env.VITE_API_URL;
+
+  const response = await fetch(`${API_BASE}/api/v1/predict`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ pixels: pixelArray }),
