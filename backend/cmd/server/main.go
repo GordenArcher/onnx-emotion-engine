@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,7 +28,7 @@ func main() {
 
 	fmt.Println("Starting ONNX Emotion Engine Backend...")
 
-	// ─── Model Initialization
+	// Model Initialization
 	// Loading an ONNX model is a relatively expensive operation: the runtime
 	// parses the protobuf graph, allocates tensor memory, and verifies that the
 	// available hardware (CPU, potentially GPU) can execute every operator.
@@ -55,7 +56,7 @@ func main() {
 	// profile across the server's lifetime.
 	defer model.Destroy()
 
-	// ─── Router Setup ────────
+	// Router Setup
 	// gin.New() gives us a completely blank router with no middleware attached.
 	// This is preferable to gin.Default() because Default() includes gin.Logger(),
 	// which would duplicate our structured request logging and write to stdout
@@ -77,6 +78,13 @@ func main() {
 	// error to a specific server-side log line. In a production incident,
 	// tracing a request ID cuts mean-time-to-resolution from hours to minutes.
 	router.Use(middleware.RequestID())
+
+	origins := os.Getenv("ALLOWED_ORIGINS")
+	allowedOrigins := []string{"http://localhost:5173"}
+	if origins != "" {
+		allowedOrigins = append(allowedOrigins, strings.Split(origins, ",")...)
+	}
+	router.Use(middleware.CORS(allowedOrigins))
 
 	// Root Endpoint — Built-in API Documentation
 	// A landing page at "/" transforms the server from a black box into a self-
