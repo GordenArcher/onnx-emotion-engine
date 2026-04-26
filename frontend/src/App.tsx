@@ -4,6 +4,7 @@ import ResultDisplay from "./components/ResultDisplay";
 import { predictEmotion } from "./services/api";
 import { softmax } from "./utils/math";
 import { EmotionData, Metadata } from "./types/envelope";
+import { useServerPing } from "./hooks/useServerPing";
 
 function App() {
   const [result, setResult] = useState<EmotionData | null>(null);
@@ -45,6 +46,12 @@ function App() {
       setIsProcessing(false);
     }
   }, []);
+
+  // Render's free tier spins down containers after 15 minutes of inactivity.
+  // A cold start takes 30-60 seconds—long enough for users to close the tab.
+  // This hook pings /api/v1/health every 2 minutes to keep the ONNX runtime
+  // warm in memory, ensuring sub-10ms inference even on the free plan. DO NOT REMOVE
+  useServerPing();
 
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-6 lg:p-8 min-h-screen bg-slate-950 text-slate-300 flex flex-col">
