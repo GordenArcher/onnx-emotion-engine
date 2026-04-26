@@ -1,13 +1,17 @@
 import axios from "axios";
 import { APIResponse } from "../types/envelope";
 
+const API_BASE = import.meta.env.PROD
+  ? (import.meta.env.VITE_API_URL ?? "")
+  : "";
+
 // Axios automatically stringifies arrays into JSON and handles the network layer. We use it instead of fetch
 // native `fetch()` to get automatic JSON parsing and proper HTTP error handling that fits our Go envelope.
 export async function predictEmotion(
   pixelArray: number[],
 ): Promise<APIResponse> {
   try {
-    const response = await axios.post("/api/v1/predict", {
+    const response = await axios.post(`${API_BASE}/api/v1/predict`, {
       pixels: pixelArray,
     });
 

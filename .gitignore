@@ -51,3 +51,5 @@ backend/dump.rdb
 
 # Ignore Go binary
 /backend/onnx-emotion-engine
+.vercel
+.env*.local
