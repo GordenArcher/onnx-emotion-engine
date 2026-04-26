@@ -22,3 +22,19 @@ export interface APIResponse<T = EmotionData> {
   request_id: string;
   metadata: Metadata;
 }
+
+export interface BatchFaceResult {
+  index: number;
+  dominant_emotion: string;
+  confidence: number;
+  probabilities: Record<string, number>;
+}
+
+export interface BatchData {
+  face_count: number;
+  results: BatchFaceResult[];
+}
+
+export interface BatchAPIResponse extends Omit<APIResponse, "data"> {
+  data: BatchData | null;
+}

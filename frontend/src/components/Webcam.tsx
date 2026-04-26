@@ -3,7 +3,9 @@ import { FaceDetector, FilesetResolver } from "@mediapipe/tasks-vision";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface WebcamProps {
-  onFaceCaptured: (pixels: number[]) => void;
+  // Emits an array of pixel arrays, one per detected face, so the parent
+  // can send a single batch request instead of N individual ones.
+  onFacesCaptured: (faces: number[][]) => void;
   isProcessing: boolean;
 }
 
@@ -76,13 +78,14 @@ function CustomSelect({
   );
 }
 
-export default function Webcam({ onFaceCaptured, isProcessing }: WebcamProps) {
+export default function Webcam({ onFacesCaptured, isProcessing }: WebcamProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Overlay canvas for drawing the bounding box on top of the video feed.
-  // We use a separate canvas rather than the capture canvas so the 48×48
-  // crop and the full-resolution overlay never interfere with each other.
+  // Overlay canvas sits on top of the video and draws a bounding box per
+  // detected face. Using a separate canvas from the capture canvas means
+  // the 48×48 crop operations and the overlay draws never share a context
+  // or clobber each other's transform state.
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const streamRef = useRef<MediaStream | null>(null);
@@ -106,23 +109,21 @@ export default function Webcam({ onFaceCaptured, isProcessing }: WebcamProps) {
   const confidenceThresholdRef = useRef(0.5);
   const [confidenceThreshold, setConfidenceThreshold] = useState(0.5);
 
-  // FPS tracking, we count how many frames are processed per second and
-  // expose the rolling value in a dev overlay.
+  // FPS tracking, we count how many processed frames per second and expose
+  // the rolling value in the options panel.
   const fpsFrameCountRef = useRef(0);
   const fpsLastTickRef = useRef(performance.now());
   const [fps, setFps] = useState(0);
 
-  // Whether the options panel (threshold + FPS) is expanded.
   const [showOptions, setShowOptions] = useState(false);
-
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
   const [isConnecting, setIsConnecting] = useState<boolean>(true);
 
-  // faceDetected drives the bounding box colour, green when a face is present,
-  // absent when not. Tracked as state because the overlay needs to react to it.
-  const [faceDetected, setFaceDetected] = useState(false);
+  // faceCount drives the indicator in the corner. We track the count rather
+  // than a boolean so the label can say "2 faces" instead of just "detected".
+  const [faceCount, setFaceCount] = useState(0);
 
   const initializeDetector = useCallback(async () => {
     const vision = await FilesetResolver.forVisionTasks(
@@ -147,15 +148,23 @@ export default function Webcam({ onFaceCaptured, isProcessing }: WebcamProps) {
     return videoInputs;
   }, []);
 
-  // drawOverlay renders a bounding box and confidence label onto the
-  // transparent overlay canvas that sits on top of the video element.
-  // It reads the video's displayed dimensions (not its intrinsic 640×480)
-  // so the box stays locked to the face regardless of how the video is
-  // scaled by CSS.
+  // drawOverlay renders a bounding box and label for every detected face onto
+  // the transparent overlay canvas. We clear the entire canvas on each call
+  // and redraw all faces, this is simpler and more correct than trying to
+  // update individual boxes, since the face count and positions both change
+  // every frame.
   const drawOverlay = useCallback(
     (
-      bbox: { originX: number; originY: number; width: number; height: number },
-      confidence: number,
+      faces: Array<{
+        bbox: {
+          originX: number;
+          originY: number;
+          width: number;
+          height: number;
+        };
+        confidence: number;
+        index: number;
+      }>,
       videoEl: HTMLVideoElement,
     ) => {
       const overlay = overlayCanvasRef.current;
@@ -163,7 +172,6 @@ export default function Webcam({ onFaceCaptured, isProcessing }: WebcamProps) {
       const ctx = overlay.getContext("2d");
       if (!ctx) return;
 
-      // Keep the overlay canvas pixel-perfect with the displayed video size.
       const { clientWidth, clientHeight } = videoEl;
       if (overlay.width !== clientWidth || overlay.height !== clientHeight) {
         overlay.width = clientWidth;
@@ -172,58 +180,63 @@ export default function Webcam({ onFaceCaptured, isProcessing }: WebcamProps) {
 
       ctx.clearRect(0, 0, overlay.width, overlay.height);
 
-      // Scale factors from the video's intrinsic resolution to its displayed size.
       const scaleX = clientWidth / (videoEl.videoWidth || 640);
       const scaleY = clientHeight / (videoEl.videoHeight || 480);
 
-      const x = bbox.originX * scaleX;
-      const y = bbox.originY * scaleY;
-      const w = bbox.width * scaleX;
-      const h = bbox.height * scaleY;
+      for (const face of faces) {
+        const x = face.bbox.originX * scaleX;
+        const y = face.bbox.originY * scaleY;
+        const w = face.bbox.width * scaleX;
+        const h = face.bbox.height * scaleY;
+        const bracketLen = Math.min(w, h) * 0.2;
 
-      // Corner bracket style, looks cleaner than a full rectangle and avoids
-      // obscuring the face with a solid border.
-      const bracketLen = Math.min(w, h) * 0.2;
-      const color = "#22c55e"; // green-500
+        // Each face gets a distinct color so they're visually separable when
+        // multiple people are in frame. The palette is chosen for legibility
+        // against dark video backgrounds.
+        const colors = ["#22c55e", "#3b82f6", "#f59e0b", "#ec4899", "#a855f7"];
+        const color = colors[face.index % colors.length];
 
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.shadowColor = color;
-      ctx.shadowBlur = 6;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 6;
 
-      // Top-left
-      ctx.beginPath();
-      ctx.moveTo(x, y + bracketLen);
-      ctx.lineTo(x, y);
-      ctx.lineTo(x + bracketLen, y);
-      ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x, y + bracketLen);
+        ctx.lineTo(x, y);
+        ctx.lineTo(x + bracketLen, y);
+        ctx.stroke();
 
-      // Top-right
-      ctx.beginPath();
-      ctx.moveTo(x + w - bracketLen, y);
-      ctx.lineTo(x + w, y);
-      ctx.lineTo(x + w, y + bracketLen);
-      ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x + w - bracketLen, y);
+        ctx.lineTo(x + w, y);
+        ctx.lineTo(x + w, y + bracketLen);
+        ctx.stroke();
 
-      // Bottom-left
-      ctx.beginPath();
-      ctx.moveTo(x, y + h - bracketLen);
-      ctx.lineTo(x, y + h);
-      ctx.lineTo(x + bracketLen, y + h);
-      ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x, y + h - bracketLen);
+        ctx.lineTo(x, y + h);
+        ctx.lineTo(x + bracketLen, y + h);
+        ctx.stroke();
 
-      // Bottom-right
-      ctx.beginPath();
-      ctx.moveTo(x + w - bracketLen, y + h);
-      ctx.lineTo(x + w, y + h);
-      ctx.lineTo(x + w, y + h - bracketLen);
-      ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x + w - bracketLen, y + h);
+        ctx.lineTo(x + w, y + h);
+        ctx.lineTo(x + w, y + h - bracketLen);
+        ctx.stroke();
 
-      // Confidence label above the top-left bracket
-      ctx.shadowBlur = 0;
-      ctx.font = "11px monospace";
-      ctx.fillStyle = color;
-      ctx.fillText(`${(confidence * 100).toFixed(0)}%`, x + 2, y - 5);
+        // Face index label + confidence above the top-left bracket.
+        // "Face 1" here maps to result index 0 in the batch response — the
+        // index is the link between the overlay and the results panel.
+        ctx.shadowBlur = 0;
+        ctx.font = "11px monospace";
+        ctx.fillStyle = color;
+        ctx.fillText(
+          `Face ${face.index + 1} · ${(face.confidence * 100).toFixed(0)}%`,
+          x + 2,
+          y - 5,
+        );
+      }
     },
     [],
   );
@@ -235,8 +248,6 @@ export default function Webcam({ onFaceCaptured, isProcessing }: WebcamProps) {
     if (ctx) ctx.clearRect(0, 0, overlay.width, overlay.height);
   }, []);
 
-  // updateFps is called once per processed frame. It increments the frame
-  // counter and recalculates the rolling FPS value every second.
   const updateFps = useCallback(() => {
     fpsFrameCountRef.current += 1;
     const now = performance.now();
@@ -256,7 +267,6 @@ export default function Webcam({ onFaceCaptured, isProcessing }: WebcamProps) {
   processFrameRef.current = () => {
     const video = videoRef.current;
 
-    // If paused, stop the loop entirely. It will be restarted by the toggle.
     if (isPausedRef.current) return;
 
     if (!video || video.readyState < 2 || video.paused || video.ended) {
@@ -266,8 +276,10 @@ export default function Webcam({ onFaceCaptured, isProcessing }: WebcamProps) {
       return;
     }
 
-    // While an API call is in-flight, keep the loop alive but skip detection
-    // to avoid flooding the server with concurrent requests.
+    // While a batch request is in-flight, keep the loop alive but skip
+    // detection — we don't want to queue up a second batch before the first
+    // one returns, which would flood the server and produce out-of-order
+    // results in the UI.
     if (isProcessingRef.current) {
       animationFrameRef.current = requestAnimationFrame(
         processFrameRef.current,
@@ -280,53 +292,77 @@ export default function Webcam({ onFaceCaptured, isProcessing }: WebcamProps) {
       try {
         const results = detector.detectForVideo(video, performance.now());
 
-        if (results.detections.length > 0) {
-          const detection = results.detections[0];
-          const bbox = detection.boundingBox;
-          const confidence = detection.categories?.[0]?.score ?? 0;
+        // Filter to faces that meet the confidence threshold before doing
+        // any canvas work. A face that doesn't meet the threshold is treated
+        // as not detected, no box, no pixels in the batch.
+        const validDetections = results.detections.filter((d) => {
+          const confidence = d.categories?.[0]?.score ?? 0;
+          return confidence >= confidenceThresholdRef.current && d.boundingBox;
+        });
 
-          // Skip frames that don't meet the user-configured confidence bar.
-          if (confidence < confidenceThresholdRef.current || !bbox) {
-            setFaceDetected(false);
-            clearOverlay();
-          } else {
-            setFaceDetected(true);
-            drawOverlay(bbox, confidence, video);
-
-            const canvas = canvasRef.current;
-            if (!canvas) return;
-            const ctx = canvas.getContext("2d", { willReadFrequently: true });
-            if (!ctx) return;
-
-            canvas.width = 48;
-            canvas.height = 48;
-            ctx.drawImage(
-              video,
-              bbox.originX,
-              bbox.originY,
-              bbox.width,
-              bbox.height,
-              0,
-              0,
-              48,
-              48,
-            );
-
-            const rgba = ctx.getImageData(0, 0, 48, 48).data;
-            const pixels = new Float64Array(6912);
-            let i = 0;
-            for (let p = 0; p < rgba.length; p += 4) {
-              pixels[i++] = rgba[p] / 255.0;
-              pixels[i++] = rgba[p + 1] / 255.0;
-              pixels[i++] = rgba[p + 2] / 255.0;
-            }
-
-            updateFps();
-            onFaceCaptured(Array.from(pixels));
-          }
-        } else {
-          setFaceDetected(false);
+        if (validDetections.length === 0) {
+          setFaceCount(0);
           clearOverlay();
+        } else {
+          setFaceCount(validDetections.length);
+
+          // Build the overlay draw list and the pixel batch in a single pass
+          // over the detections so we only iterate the array once.
+          const overlayFaces: Array<{
+            bbox: {
+              originX: number;
+              originY: number;
+              width: number;
+              height: number;
+            };
+            confidence: number;
+            index: number;
+          }> = [];
+
+          const pixelBatch: number[][] = [];
+          const canvas = canvasRef.current;
+          const ctx = canvas?.getContext("2d", { willReadFrequently: true });
+
+          if (canvas && ctx) {
+            for (let i = 0; i < validDetections.length; i++) {
+              const detection = validDetections[i];
+              const bbox = detection.boundingBox!;
+              const confidence = detection.categories?.[0]?.score ?? 0;
+
+              overlayFaces.push({ bbox, confidence, index: i });
+
+              // Reuse the same canvas for every face, setting width/height
+              // implicitly clears it, so no explicit clearRect needed.
+              canvas.width = 48;
+              canvas.height = 48;
+              ctx.drawImage(
+                video,
+                bbox.originX,
+                bbox.originY,
+                bbox.width,
+                bbox.height,
+                0,
+                0,
+                48,
+                48,
+              );
+
+              const rgba = ctx.getImageData(0, 0, 48, 48).data;
+              const pixels = new Float64Array(6912);
+              let p = 0;
+              for (let j = 0; j < rgba.length; j += 4) {
+                pixels[p++] = rgba[j] / 255.0;
+                pixels[p++] = rgba[j + 1] / 255.0;
+                pixels[p++] = rgba[j + 2] / 255.0;
+              }
+
+              pixelBatch.push(Array.from(pixels));
+            }
+          }
+
+          drawOverlay(overlayFaces, video);
+          updateFps();
+          onFacesCaptured(pixelBatch);
         }
       } catch {
         // Silent drop on individual frame failures, a single bad frame
@@ -414,17 +450,14 @@ export default function Webcam({ onFaceCaptured, isProcessing }: WebcamProps) {
     setIsPaused(next);
 
     if (!next) {
-      // Resuming, restart the frame loop.
       clearOverlay();
       animationFrameRef.current = requestAnimationFrame(
         processFrameRef.current,
       );
     } else {
-      // Pausing, cancel any pending frame and clear the overlay so the
-      // bounding box doesn't freeze in place.
       cancelAnimationFrame(animationFrameRef.current);
       clearOverlay();
-      setFaceDetected(false);
+      setFaceCount(0);
     }
   };
 
@@ -585,8 +618,6 @@ export default function Webcam({ onFaceCaptured, isProcessing }: WebcamProps) {
           className={`block w-full ${cameraError ? "hidden" : ""}`}
         />
 
-        {/* Bounding box overlay, sits directly on top of the video and is
-            pointer-events:none so it never blocks clicks on the video itself. */}
         <canvas
           ref={overlayCanvasRef}
           className="absolute inset-0 w-full h-full pointer-events-none"
@@ -608,17 +639,19 @@ export default function Webcam({ onFaceCaptured, isProcessing }: WebcamProps) {
           )}
         </AnimatePresence>
 
-        {/* Face detected indicator, a subtle dot in the corner so the user
-            knows detection is live without the bounding box being distracting. */}
         {!cameraError && !isConnecting && !isPaused && (
           <div className="absolute bottom-2 right-2 flex items-center gap-1.5 pointer-events-none">
             <div
               className={`w-2 h-2 rounded-full transition-colors duration-300 ${
-                faceDetected ? "bg-green-400" : "bg-slate-600"
+                faceCount > 0 ? "bg-green-400" : "bg-slate-600"
               }`}
             />
             <span className="text-xs font-mono text-slate-500">
-              {faceDetected ? "face detected" : "no face"}
+              {faceCount === 0
+                ? "no face"
+                : faceCount === 1
+                  ? "1 face"
+                  : `${faceCount} faces`}
             </span>
           </div>
         )}

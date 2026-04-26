@@ -243,6 +243,11 @@ func main() {
 		})
 	}
 
+	v2 := router.Group("/api/v2")
+	{
+		v2.POST("/predict/batch", handlers.BatchPredictHandler(model))
+	}
+
 	// HTTP Server Configuration
 	// We explicitly construct the http.Server struct rather than calling
 	// router.Run() because we need a handle on the server to gracefully shut it

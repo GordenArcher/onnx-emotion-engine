@@ -3,26 +3,43 @@ package models
 import "time"
 
 // EmotionData represents the successful payload returned when inference completes.
-// I am keeping this separate from the envelope so the handler can easily construct
-// just the data portion without worrying about the outer API structure.
+// I keep this separate from the envelope so the handler constructs just the data
+// portion without caring about the outer API structure. If we ever add a field
+// (say, a per-emotion confidence interval), the change stays in this struct and
+// the envelope is untouched.
 type EmotionData struct {
 	DominantEmotion string             `json:"dominant_emotion"`
 	Confidence      float64            `json:"confidence"`
 	Probabilities   map[string]float64 `json:"probabilities"`
 }
 
-// Metadata holds the operational telemetry for the request.
-// Separating this makes it easy to add new metrics later (like GPU utilization or queue wait time)
-// without touching the core data models.
+// BatchData wraps the results of a multi-face inference request. FaceCount is
+// redundant with len(Results) but including it explicitly means the client
+// doesn't have to count — and it makes log lines self-describing without
+// having to deserialize the full results array.
+type BatchData struct {
+	FaceCount int   `json:"face_count"`
+	Results   []any `json:"results"`
+}
+
+// Metadata holds operational telemetry for the request. I keep this separate
+// from the data payload so monitoring tools can parse just the metadata without
+// caring about the shape of the domain data. Adding a new metric (GPU
+// utilization, queue wait time) is a one-field change here with zero impact
+// on the rest of the codebase.
 type Metadata struct {
 	InferenceTimeMs float64 `json:"inference_time_ms"`
 	ModelVersion    string  `json:"model_version"`
 	Timestamp       string  `json:"timestamp"`
 }
 
-// APIResponse is the strict, universal envelope for every HTTP response this server sends.
-// By using a single struct for both success and error states, we guarantee frontend
-// consumers always know how to parse the response, reducing frontend parsing bugs.
+// APIResponse is the universal envelope for every HTTP response this server sends —
+// success, error, documentation, health check, all of it. A single struct for
+// every response shape means the frontend can write one parser and never
+// special-case an endpoint. The `omitempty` tags ensure that error responses
+// don't carry a null "data" field and success responses don't carry a null
+// "errors" field, the wire format stays clean without any manual nil checks
+// in the handlers.
 type APIResponse struct {
 	Status    string              `json:"status"`
 	Message   string              `json:"message"`
@@ -34,11 +51,10 @@ type APIResponse struct {
 }
 
 // API Documentation Models
-// These structs power the built-in documentation served at the root "/" endpoint.
-// By defining them as proper types (rather than ad-hoc map[string]interface{}),
-// we get compile-time guarantees that the documentation shape never drifts from
-// what the handler constructs. The frontend can also generate TypeScript types
-// from these definitions if we ever publish an OpenAPI spec derived from them.
+// These structs power the self-documenting "/" endpoint. Using proper types
+// instead of map[string]interface{} gives us compile-time guarantees that the
+// documentation shape never drifts from what the handlers actually produce.
+// If we ever generate an OpenAPI spec, these types are the source of truth.
 
 // APIDocumentation is the top-level documentation payload. It describes the
 // service, the model it wraps, every available route, and operational notes
@@ -53,9 +69,11 @@ type APIDocumentation struct {
 }
 
 // ModelInfo captures the static contract between the Python training pipeline
-// and the Go inference server. If any of these values change—image size, number
-// of channels, emotion class order—the model must be retrained and re-exported.
-// This struct serves as living documentation of that contract.
+// and the Go inference server. These values are not configuration — they are
+// hard constraints baked into the exported ONNX graph. If the image size
+// changes, the channel count changes, or the emotion class order changes,
+// the model must be retrained and re-exported before any of these values
+// can be updated. Treat this struct as immutable between model versions.
 type ModelInfo struct {
 	Architecture     string   `json:"architecture"`
 	InputShape       string   `json:"input_shape"`
@@ -68,9 +86,9 @@ type ModelInfo struct {
 }
 
 // RouteDoc describes a single API endpoint in enough detail that a developer
-// can integrate with it without reading any other documentation. It includes
-// the HTTP method, path, a human-readable description, full request/response
-// schemas (using our actual APIResponse type), and a copy-pasteable curl example.
+// can integrate without reading any other documentation. The curl example field
+// is not optional, a working copy-pasteable command is worth more than three
+// paragraphs of prose.
 type RouteDoc struct {
 	Method          string            `json:"method"`
 	Path            string            `json:"path"`
@@ -83,9 +101,11 @@ type RouteDoc struct {
 	Example         string            `json:"example"`
 }
 
-// NewSuccessResponse is a constructor function to cleanly build a valid success payload.
-// I use constructors rather than initializing structs directly in handlers to ensure
-// required fields (like timestamps and default statuses) are never accidentally left blank.
+// NewSuccessResponse constructs a valid success envelope for single-face inference.
+// Using a constructor rather than initializing the struct directly in the handler
+// ensures required fields, timestamp, model version, status — are never
+// accidentally left blank. The handler should never need to know what
+// "mobilenet-v2-v1.0.0" is called.
 func NewSuccessResponse(requestID string, data any, inferenceMs float64) APIResponse {
 	return APIResponse{
 		Status:    "success",
@@ -101,9 +121,38 @@ func NewSuccessResponse(requestID string, data any, inferenceMs float64) APIResp
 	}
 }
 
-// NewErrorResponse is a constructor function to cleanly build a consistent error payload.
-// I'm accepting a map of errors so the frontend can display validation errors
-// next to specific form fields (e.g., {"pixels": ["array too short"]}).
+// NewBatchSuccessResponse constructs a valid success envelope for multi-face
+// batch inference. The faceCount parameter is accepted explicitly rather than
+// derived from len(results) because at the call site the handler already has
+// the count, passing it avoids a redundant len() call and makes the
+// constructor's intent explicit: you are telling it how many faces were
+// processed, not asking it to figure it out.
+//
+// inference_time_ms here covers the full batch, not a single face. If you need
+// per-face timing, add it to BatchFaceResult, don't put it in the envelope
+// metadata where it would be ambiguous.
+func NewBatchSuccessResponse(requestID string, results []any, inferenceMs float64, faceCount int) APIResponse {
+	return APIResponse{
+		Status:    "success",
+		Message:   "Batch emotion inference completed",
+		Data:      BatchData{FaceCount: faceCount, Results: results},
+		Code:      "BATCH_EMOTION_INFERRED",
+		RequestID: requestID,
+		Metadata: Metadata{
+			InferenceTimeMs: inferenceMs,
+			ModelVersion:    "mobilenet-v2-v1.0.0",
+			Timestamp:       time.Now().UTC().Format(time.RFC3339),
+		},
+	}
+}
+
+// NewErrorResponse constructs a consistent error envelope. The errs map accepts
+// field-level validation errors so the frontend can display them next to the
+// specific input that caused the problem, {"faces[2]": ["Expected 6912 floats,
+// received 500"]} is more useful than a generic "validation failed" message.
+// For non-validation errors (inference failures, internal errors), pass a single
+// key that describes the failure domain ("inference", "model") rather than a
+// field name.
 func NewErrorResponse(requestID string, code string, message string, errs map[string][]string) APIResponse {
 	return APIResponse{
 		Status:    "error",

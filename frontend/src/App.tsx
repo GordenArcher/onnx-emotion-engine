@@ -1,51 +1,44 @@
 import { useState, useCallback, useRef } from "react";
 import Webcam from "./components/Webcam";
 import ResultDisplay from "./components/ResultDisplay";
-import { predictEmotion } from "./services/api";
-import { softmax } from "./utils/math";
-import { EmotionData, Metadata } from "./types/envelope";
+import { predictEmotionBatch } from "./services/api";
+import { BatchFaceResult, Metadata } from "./types/envelope";
 import { useServerPing } from "./hooks/useServerPing";
 import { Analytics } from "@vercel/analytics/react";
 
 function App() {
   // Render's free tier spins down containers after 15 minutes of inactivity.
-  // A cold start takes 30-60 seconds—long enough for users to close the tab.
+  // A cold start takes 30-60 seconds — long enough for users to close the tab.
   // This hook pings /api/v1/health every 2 minutes to keep the ONNX runtime
-  // warm in memory, ensuring sub-10ms inference even on the free plan. DO NOT REMOVE
+  // warm in memory, ensuring sub-10ms inference even on the free plan. DO NOT REMOVE.
   useServerPing();
 
-  const [result, setResult] = useState<EmotionData | null>(null);
-  const [requestID, setsetRequestID] = useState<string | null>(null);
+  const [results, setResults] = useState<BatchFaceResult[] | null>(null);
+  const [requestID, setRequestID] = useState<string | null>(null);
   const [metadata, setMetadata] = useState<Metadata | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // isProcessingRef is the authoritative gate — it's read synchronously inside
+  // the Webcam frame loop ref, so it blocks a new batch from firing before the
+  // previous one returns. isProcessing state is the derived copy that drives
+  // the UI. Both must be kept in sync via the finally block.
   const isProcessingRef = useRef<boolean>(false);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
-  const handleFaceCaptured = useCallback(async (pixels: number[]) => {
+  const handleFacesCaptured = useCallback(async (faces: number[][]) => {
     if (isProcessingRef.current) return;
     isProcessingRef.current = true;
     setIsProcessing(true);
 
     try {
-      const response = await predictEmotion(pixels);
+      const response = await predictEmotionBatch(faces);
 
       if (response.data) {
-        const rawProbs = Object.values(response.data.probabilities);
-        const normalizedProbs = softmax(rawProbs);
-
-        const finalProbs: Record<string, number> = {};
-        Object.keys(response.data.probabilities).forEach((key, index) => {
-          finalProbs[key] = normalizedProbs[index];
-        });
-
-        setsetRequestID(response.request_id);
-
-        setResult({ ...response.data, probabilities: finalProbs });
+        setRequestID(response.request_id);
+        setResults(response.data.results);
+        setMetadata(response.metadata);
+        setError(null);
       }
-
-      setMetadata(response.metadata);
-      setError(null);
     } catch (err) {
       if (err instanceof Error) setError(err.message);
     } finally {
@@ -68,10 +61,10 @@ function App() {
       <main className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5 min-h-0">
         <section className="bg-slate-900 border border-slate-700 rounded-md overflow-hidden flex flex-col min-h-[300px] md:min-h-0">
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 p-3 border-b border-slate-700 bg-slate-950 shrink-0">
-            Live Feed (Native Face Detection)
+            Live Feed
           </div>
           <Webcam
-            onFaceCaptured={handleFaceCaptured}
+            onFacesCaptured={handleFacesCaptured}
             isProcessing={isProcessing}
           />
         </section>
@@ -80,20 +73,19 @@ function App() {
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 p-3 border-b border-slate-700 bg-slate-950 shrink-0">
             Inference Results
           </div>
-
           {error && (
             <div className="m-3 md:m-4 p-2.5 bg-red-400/10 border border-red-400/40 text-red-400 text-[13px] rounded">
               {error}
             </div>
           )}
-
           <ResultDisplay
-            data={result}
+            results={results}
             metadata={metadata}
             request_id={requestID}
           />
         </section>
       </main>
+
       <Analytics />
     </div>
   );

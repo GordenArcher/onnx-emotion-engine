@@ -1,9 +1,7 @@
 import axios from "axios";
 import { useEffect } from "react";
 
-const API_BASE = import.meta.env.PROD
-  ? (import.meta.env.VITE_API_URL ?? "")
-  : "";
+const API_BASE = import.meta.env.VITE_API_URL;
 
 export function useServerPing(intervalMs = 120_000) {
   useEffect(() => {
