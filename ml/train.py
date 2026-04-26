@@ -61,6 +61,7 @@ train_transform = transforms.Compose(
 val_transform = transforms.Compose(
     [
         transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+        transforms.Grayscale(num_output_channels=3),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ]
@@ -140,7 +141,13 @@ criterion = nn.CrossEntropyLoss(weight=class_weights)
 # AdamW decouples weight decay from the adaptive learning rate, a fix that
 # produces strictly better generalization than vanilla Adam. We optimize only
 # the classifier parameters because the feature extractor is frozen.
-optimizer = optim.AdamW(model.classifier.parameters(), lr=LEARNING_RATE)
+optimizer = optim.AdamW(
+    [
+        {"params": model.features[-3:].parameters()},
+        {"params": model.classifier.parameters()},
+    ],
+    lr=LEARNING_RATE,
+)
 
 # Cosine annealing smoothly reduces the learning rate from its initial value to
 # near zero over the full training run. This helps the optimizer settle into a
@@ -213,6 +220,11 @@ for epoch in range(EPOCHS):
 
 #  ONNX Export
 print("Exporting trained model to ONNX...")
+
+
+# SAFETY NET: Always save weights to disk before attempting a format conversion.
+# If the export crashes, we don't lose hours of training.
+torch.save(model.state_dict(), "emotion_weights.pt")
 
 # Export must happen in eval mode. If the model is still in training mode,
 # Dropout layers remain active and will randomly zero out features during

@@ -3,6 +3,7 @@ package ml
 import (
 	"errors"
 	"fmt"
+	"os"
 
 	ort "github.com/yalue/onnxruntime_go"
 )
@@ -48,16 +49,37 @@ func NewEmotionModel(modelPath string) (*EmotionModel, error) {
 	// The filename is platform-dependent and must match the OS where this
 	// server is deployed:
 	//
-	//   macOS:           "./libonnxruntime.dylib"
-	//   Linux (glibc):   "./libonnxruntime.so"
-	//   Linux (musl):    "./libonnxruntime.so"  (separate build required)
+	//   macOS (x86_64):  "./libonnxruntime.1.21.0.dylib"
+	//   macOS (arm64):   "./libonnxruntime.1.21.0.dylib"
+	//   Linux (x86_64):  "./libonnxruntime.so.1.21.0"
 	//   Windows:         "./onnxruntime.dll"
 	//
-	// If this path is wrong, the process will panic with a "failed to load
-	// shared library" error. In a containerized deployment, this library
-	// should be copied into the Docker image at build time or mounted as a
-	// volume at a known, stable path.
-	ort.SetSharedLibraryPath("./libonnxruntime.dylib")
+	// This server is built against github.com/yalue/onnxruntime_go v1.13.0,
+	// which targets ORT C API version 20. The matching ORT release is 1.21.0.
+	// Using any other ORT version will produce an "API version not available"
+	// error at startup.
+	//
+	// On macOS the dylib's @rpath self-reference must be rewritten to
+	// @loader_path before the dynamic linker can resolve it:
+	//
+	//   install_name_tool -id @loader_path/libonnxruntime.1.21.0.dylib \
+	//     ./libonnxruntime.1.21.0.dylib
+	//   install_name_tool -change \
+	//     @rpath/libonnxruntime.1.21.0.dylib \
+	//     @loader_path/libonnxruntime.1.21.0.dylib \
+	//     ./libonnxruntime.1.21.0.dylib
+	//
+	// In a containerized deployment, copy the correct platform library into
+	// the Docker image at build time and inject this path via an environment
+	// variable or build tag to avoid manual edits across platforms.
+	libPath := os.Getenv("ORT_LIB_PATH")
+	if libPath == "" {
+		libPath = "./libonnxruntime.1.21.0.dylib" // local macOS fallback
+	}
+	ort.SetSharedLibraryPath(libPath)
+	if err := ort.InitializeEnvironment(); err != nil {
+		return nil, fmt.Errorf("failed to initialize ONNX runtime: %w", err)
+	}
 
 	// 2. Define tensor shapes
 	// The shape constants are not configurable at this layer; they are a hard

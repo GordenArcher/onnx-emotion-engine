@@ -5,7 +5,7 @@ go 1.25.1
 require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/google/uuid v1.6.0
-	github.com/yalue/onnxruntime_go v1.28.0
+	github.com/yalue/onnxruntime_go v1.13.0
 )
 
 require (

@@ -29,7 +29,7 @@ on commodity hardware.
   │       └── request_id.go       # Injects a UUID v4 into every request for distributed tracing.
   ├── go.mod                      # Module definition with pinned dependency versions.
   ├── go.sum                      # Cryptographic checksums for the module graph.
-  ├── libonnxruntime.dylib        # ONNX Runtime shared library (macOS). Platform-specific;
+  ├── libonnxruntime.1.21.0.dylib        # ONNX Runtime shared library (macOS x86_64). Platform-specific;
   │                               # Linux and Windows users must supply their own build.
   └── emotion_model.onnx          # The serialized model (copied or symlinked from /ml).
 ```
@@ -126,39 +126,65 @@ The server requires the ONNX Runtime C++ shared library at runtime. This is a
 native, platform-specific binary that cannot be vendored with `go mod`. You
 must download the correct build for your operating system and architecture.
 
+> **Version lock:** This server uses `github.com/yalue/onnxruntime_go v1.13.0`,
+> which targets ORT C API version 20. You **must** use ORT **1.21.0** — earlier
+> or later releases will be rejected at startup with an "API version not
+> available" error.
+
 ### macOS (Intel — x86_64)
+
 ```bash
-curl -L https://github.com/microsoft/onnxruntime/releases/download/v1.14.1/onnxruntime-osx-x86_64-1.14.1.tgz \
-  | tar xz --strip-components=1 onnxruntime-osx-x86_64-1.14.1/lib/libonnxruntime.dylib
+curl -L https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-osx-x86_64-1.21.0.tgz \
+  | tar xz --strip-components=2 onnxruntime-osx-x86_64-1.21.0/lib/libonnxruntime.1.21.0.dylib
+
+install_name_tool -id @loader_path/libonnxruntime.1.21.0.dylib ./libonnxruntime.1.21.0.dylib
+install_name_tool -change \
+  @rpath/libonnxruntime.1.21.0.dylib \
+  @loader_path/libonnxruntime.1.21.0.dylib \
+  ./libonnxruntime.1.21.0.dylib
 ```
 
 ### macOS (Apple Silicon — arm64)
+
 ```bash
-curl -L https://github.com/microsoft/onnxruntime/releases/download/v1.14.1/onnxruntime-osx-arm64-1.14.1.tgz \
-  | tar xz --strip-components=1 onnxruntime-osx-arm64-1.14.1/lib/libonnxruntime.dylib
+curl -L https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-osx-arm64-1.21.0.tgz \
+  | tar xz --strip-components=2 onnxruntime-osx-arm64-1.21.0/lib/libonnxruntime.1.21.0.dylib
+
+install_name_tool -id @loader_path/libonnxruntime.1.21.0.dylib ./libonnxruntime.1.21.0.dylib
+install_name_tool -change \
+  @rpath/libonnxruntime.1.21.0.dylib \
+  @loader_path/libonnxruntime.1.21.0.dylib \
+  ./libonnxruntime.1.21.0.dylib
 ```
 
 ### Linux (x86_64, glibc)
+
 ```bash
-curl -L https://github.com/microsoft/onnxruntime/releases/download/v1.14.1/onnxruntime-linux-x64-1.14.1.tgz \
-  | tar xz --strip-components=1 onnxruntime-linux-x64-1.14.1/lib/libonnxruntime.so
+curl -L https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-linux-x64-1.21.0.tgz \
+  | tar xz --strip-components=2 onnxruntime-linux-x64-1.21.0/lib/libonnxruntime.so.1.21.0
 ```
 
 ### Windows (x86_64 — PowerShell)
+
 ```powershell
-Invoke-WebRequest -Uri https://github.com/microsoft/onnxruntime/releases/download/v1.14.1/onnxruntime-win-x64-1.14.1.zip -OutFile onnxruntime.zip
+Invoke-WebRequest -Uri https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-win-x64-1.21.0.zip -OutFile onnxruntime.zip
 Expand-Archive -Path onnxruntime.zip -DestinationPath .
-Copy-Item -Path ./onnxruntime-win-x64-1.14.1/lib/onnxruntime.dll -Destination .
-Remove-Item -Path onnxruntime.zip, ./onnxruntime-win-x64-1.14.1 -Recurse -Force
+Copy-Item -Path ./onnxruntime-win-x64-1.21.0/lib/onnxruntime.dll -Destination .
+Remove-Item -Path onnxruntime.zip, ./onnxruntime-win-x64-1.21.0 -Recurse -Force
 ```
 
-**Platform-specific shared library path:** The file `internal/ml/inference.go`
-currently calls `ort.SetSharedLibraryPath("./libonnxruntime.dylib")`. If you are
-on Linux or Windows, change that string to `./libonnxruntime.so` or
-`./onnxruntime.dll` respectively before building. In a containerized deployment,
-this path should be injected via an environment variable or a build tag to avoid
-manual edits.
+**Platform-specific shared library path:** `internal/ml/inference.go` calls
+`ort.SetSharedLibraryPath("./libonnxruntime.1.21.0.dylib")`. Update this string
+to match your platform:
 
+| OS | Library filename |
+|----|-----------------|
+| macOS (x86_64 / arm64) | `./libonnxruntime.1.21.0.dylib` |
+| Linux | `./libonnxruntime.so.1.21.0` |
+| Windows | `./onnxruntime.dll` |
+
+In a containerized deployment, inject this path via an environment variable or
+build tag to avoid manual edits across platforms.
 ## Running the Server
 
 1. **Model artifact.** Copy or symlink `emotion_model.onnx` from the `/ml`
@@ -175,12 +201,28 @@ manual edits.
    go run cmd/server/main.go
    ```
 
+5. **Docker (optional).**
+```bash
+   # Build and run with Docker Compose
+   docker compose up --build
+
+   # Or build the image directly for a specific platform
+   docker buildx build --platform linux/amd64 -t emotion-engine .
+```
+   The `ORT_LIB_PATH` environment variable controls which shared library the
+   server loads. It defaults to `./libonnxruntime.so.1.21.0` inside the
+   container (set in `docker-compose.yml`). Override it in `.env` if needed:
+```env
+   ORT_LIB_PATH=./libonnxruntime.so.1.21.0
+```
+
 The server binds to `http://localhost:8080`. A healthy startup prints:
 
 ```
 Starting ONNX Emotion Engine Backend...
 ML Model loaded successfully into memory.
 Server is listening on http://localhost:8080
+Visit http://localhost:8080 for complete API documentation
 ```
 
 Verify with `curl http://localhost:8080/api/v1/health`.
