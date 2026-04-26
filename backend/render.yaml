@@ -13,8 +13,9 @@ services:
   - type: web
     name: emotion-engine-ui
     runtime: static
-    buildCommand: cd frontend && npm ci && npm run build
-    staticPublishPath: ./frontend/dist
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
     pullRequestPreviewsEnabled: false
     headers:
       - path: /*
@@ -26,7 +27,4 @@ services:
         destination: /index.html
     envVars:
       - key: VITE_API_URL
-        fromService:
-          name: emotion-engine-api
-          type: web
-          property: host
+        value: https://emotion-engine-api.onrender.com
