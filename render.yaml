@@ -3,7 +3,7 @@ services:
     name: emotion-engine-api
     runtime: docker
     dockerfilePath: ./Dockerfile
-    dockerContext: ./backend
+    dockerContext: .
     plan: starter
     envVars:
       - key: ORT_LIB_PATH

@@ -48,16 +48,16 @@ WORKDIR /app
 
 # Copy dependency manifests first so Docker can cache the module download
 # layer independently of source changes.
-COPY go.mod go.sum ./
+COPY backend/go.mod backend/go.sum ./
 RUN go mod download
+
 
 # Copy the rest of the source tree and compile a fully static binary.
 # CGO_ENABLED=1 is required because the onnxruntime_go binding uses cgo to
 # call into the ORT C API. We link against glibc (not musl) to match the
 # Debian-based runtime image.
-COPY . .
-RUN CGO_ENABLED=1 GOOS=linux \
-    go build -o /app/server ./cmd/server/main.go
+COPY backend/ .
+RUN CGO_ENABLED=1 GOOS=linux go build -o /app/server ./cmd/server/main.go
 
 #
 # Stage 3 — Minimal runtime image
@@ -84,13 +84,14 @@ ARG ORT_VERSION=1.21.0
 # Pull in the ORT library from the downloader stage
 COPY --from=ort-downloader /tmp/libonnxruntime.so.${ORT_VERSION} ./libonnxruntime.so.${ORT_VERSION}
 
+
 # Pull in the compiled server binary from the builder stage
 COPY --from=builder /app/server ./server
 
 # The ONNX model file must be present at the path NewEmotionModel() expects.
 # If you store models externally (S3, GCS) you would remove this line and
 # mount the file at runtime instead.
-COPY emotion_model.onnx ./emotion_model.onnx
+COPY backend/emotion_model.onnx ./emotion_model.onnx
 
 # Run as a non-root user. This is a hard requirement in most production
 # environments and a security best practice everywhere else.
