@@ -2,7 +2,7 @@ services:
   - type: web
     name: emotion-engine-api
     runtime: docker
-    dockerfilePath: ./backend/Dockerfile
+    dockerfilePath: ./Dockerfile
     dockerContext: ./backend
     plan: starter
     envVars:
