@@ -1,21 +1,44 @@
+import axios from "axios";
 import { APIResponse } from "../types/envelope";
 
+// Axios automatically stringifies arrays into JSON and handles the network layer. We use it instead of fetch
+// native `fetch()` to get automatic JSON parsing and proper HTTP error handling that fits our Go envelope.
 export async function predictEmotion(
   pixelArray: number[],
 ): Promise<APIResponse> {
-  const API_BASE = import.meta.env.VITE_API_URL;
+  try {
+    const response = await axios.post("/api/v1/predict", {
+      pixels: pixelArray,
+    });
 
-  const response = await fetch(`${API_BASE}/api/v1/predict`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pixels: pixelArray }),
-  });
+    // response.data is automatically parsed into our strict TypeScript interfaces.
+    const data: APIResponse = // use fallback value in case the API sends garbage.
+      response.data?.data
+        ? response.data
+        : {
+            status: "error",
+            message: "Invalid response structure.",
+            data: null,
+            errors: null,
+            code: "INVALID_RESPONSE",
+            request_id: "unknown",
+            metadata: null,
+          };
 
-  const data: APIResponse = await response.json();
+    if (data.status === "error") {
+      throw new Error(data.message);
+    }
 
-  if (data.status === "error") {
-    throw new Error(data.message || "Prediction failed");
+    return data;
+  } catch (error) {
+    // If it's an AxiosError, we dig into the raw error object to pull out our custom Go API response
+    // instead of just throwing a generic "Network Error".
+    if (axios.isAxiosError(error) && error.response?.data) {
+      const data = error.response.data as APIResponse;
+      throw new Error(data.message || "Prediction failed", { cause: error });
+    }
+    throw new Error("Network error or unexpected API failure.", {
+      cause: error,
+    });
   }
-
-  return data;
 }
