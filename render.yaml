@@ -2,9 +2,8 @@ services:
   - type: web
     name: emotion-engine-api
     runtime: docker
-    rootDir: backend
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
     plan: starter
     envVars:
       - key: ORT_LIB_PATH
