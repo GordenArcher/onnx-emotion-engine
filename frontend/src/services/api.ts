@@ -1,5 +1,6 @@
 import axios from "axios";
 import { APIResponse } from "../types/envelope";
+import { track } from "@vercel/analytics";
 
 const API_BASE = import.meta.env.PROD
   ? (import.meta.env.VITE_API_URL ?? "")
@@ -32,6 +33,12 @@ export async function predictEmotion(
     if (data.status === "error") {
       throw new Error(data.message);
     }
+
+    track("prediction_made", {
+      dominant_emotion: data?.data.dominant_emotion,
+      confidence: parseFloat(data?.data.confidence.toFixed(2)),
+      inference_time_ms: data.metadata?.inference_time_ms ?? 0,
+    });
 
     return data;
   } catch (error) {

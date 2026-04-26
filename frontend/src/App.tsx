@@ -5,6 +5,7 @@ import { predictEmotion } from "./services/api";
 import { softmax } from "./utils/math";
 import { EmotionData, Metadata } from "./types/envelope";
 import { useServerPing } from "./hooks/useServerPing";
+import { Analytics } from "@vercel/analytics/react";
 
 function App() {
   // Render's free tier spins down containers after 15 minutes of inactivity.
@@ -93,6 +94,7 @@ function App() {
           />
         </section>
       </main>
+      <Analytics />
     </div>
   );
 }

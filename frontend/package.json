@@ -12,6 +12,7 @@
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.34",
     "@tailwindcss/vite": "^4.2.4",
+    "@vercel/analytics": "^2.0.1",
     "axios": "^1.15.2",
     "dotenv": "^17.4.2",
     "framer-motion": "^12.38.0",
